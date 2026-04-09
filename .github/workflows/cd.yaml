@@ -1,0 +1,42 @@
+name: CD Prod Pipeline
+
+on:
+  push:
+    branches:
+      - main # S'exécute uniquement lors du déploiement final sur main
+
+env:
+  IMAGE_NAME: intranet-newdeal
+  CONTAINER_NAME: intranet-prod
+
+jobs:
+  deploy:
+    runs-on: runner_prod # C'est ici qu'on cible ton serveur de production
+    steps:
+      # 1. Connexion à Docker Hub pour pouvoir puller l'image
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # 2. Récupération de la dernière version de l'image
+      - name: Pull latest image
+        run: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:dev
+
+      # 3. Nettoyage et Lancement (Le cœur du déploiement)
+      - name: Deploy Container
+        run: |
+          # Arrête le conteneur s'il existe déjà (ignore l'erreur s'il n'existe pas)
+          docker stop ${{ env.CONTAINER_NAME }} || true
+          docker rm ${{ env.CONTAINER_NAME }} || true
+          
+          # Lancement sur le port 80 (Exigence de l'examen)
+          docker run -d \
+            --name ${{ env.CONTAINER_NAME }} \
+            -p 80:80 \
+            --restart always \
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:dev
+
+      # 4. Vérification finale
+      - name: Check status
+        run: docker ps | grep ${{ env.CONTAINER_NAME }}

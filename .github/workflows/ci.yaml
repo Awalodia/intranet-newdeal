@@ -8,54 +8,53 @@ on:
 env:
   IMAGE_NAME: intranet-newdeal
   IMAGE_TAG: dev
-  # On utilise le secret pour le nom d'utilisateur Docker Hub
-  DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
 
 jobs:
-  # Job unique pour éviter les pertes d'images entre machines
+  # Regroupement des étapes pour garantir que l'image est disponible pour le scan et le push
   build-scan-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
 
-      # 1. Construction locale pour le scan
+      # 1. Construction de l'image (Job 1)
       - name: Build Docker image
         run: |
-          docker build -t ${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
 
-      # 2. Scan de sécurité obligatoire (Job 2 de l'examen)
+      # 2. Scan de sécurité Trivy (Job 2)
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
           format: 'table'
-          exit-code: '1'       # Bloque le push si une faille est trouvée
-          severity: 'CRITICAL' # Niveau de sévérité imposé par l'énoncé
+          exit-code: '1'       # Bloque le pipeline si une faille est trouvée
+          severity: 'CRITICAL' # Seuil de blocage imposé
 
-      # 3. Connexion et Push (Job 3 de l'examen)
+      # 3. Connexion et Push vers Docker Hub (Job 3)
       - name: Login to Docker Hub
-        if: success() # Ne s'exécute que si le scan Trivy est OK
+        if: success()
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Push image
         if: success()
         run: |
-          docker push ${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
       # 4. Notification par mail (Étape 5)
       - name: Send notification mail
-        if: always() # Envoi même si le scan a échoué
+        if: always() # S'exécute même si le scan ou le push échoue
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
+          password: ${{ secrets.MAIL_PASSWORD }} # Utilise le mot de passe d'application ici
           from: ${{ secrets.MAIL_USERNAME }}
-          subject: Status Pipeline CI - Dev
+          subject: Status Pipeline CI - Dev - ${{ github.run_number }}
           body: |
             Le pipeline pour le projet ${{ github.repository }} est terminé.
-            Résultat final : ${{ job.status }}
+            Status final du Job : ${{ job.status }}
+            Lien vers le build : https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           to: moussawade@groupeisi.com
