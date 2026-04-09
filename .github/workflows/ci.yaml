@@ -1,0 +1,61 @@
+name: CI Dev Pipeline
+
+on:
+  push:
+    branches:
+      - dev # S'exécute uniquement sur la branche dev
+
+env:
+  IMAGE_NAME: intranet-newdeal
+  IMAGE_TAG: dev
+  # On utilise le secret pour le nom d'utilisateur Docker Hub
+  DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  # Job unique pour éviter les pertes d'images entre machines
+  build-scan-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      # 1. Construction locale pour le scan
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+
+      # 2. Scan de sécurité obligatoire (Job 2 de l'examen)
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
+          format: 'table'
+          exit-code: '1'       # Bloque le push si une faille est trouvée
+          severity: 'CRITICAL' # Niveau de sévérité imposé par l'énoncé
+
+      # 3. Connexion et Push (Job 3 de l'examen)
+      - name: Login to Docker Hub
+        if: success() # Ne s'exécute que si le scan Trivy est OK
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Push image
+        if: success()
+        run: |
+          docker push ${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+      # 4. Notification par mail (Étape 5)
+      - name: Send notification mail
+        if: always() # Envoi même si le scan a échoué
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: ${{ secrets.MAIL_USERNAME }}
+          subject: Status Pipeline CI - Dev
+          body: |
+            Le pipeline pour le projet ${{ github.repository }} est terminé.
+            Résultat final : ${{ job.status }}
+          to: moussawade@groupeisi.com
